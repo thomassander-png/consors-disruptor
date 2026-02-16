@@ -37,6 +37,24 @@ export default function App() {
   const [emailCfg, setEmailCfg] = useState({ service:"", template:"", key:"" });
   const [filter, setFilter] = useState("ALL"); // ALL, SHORT, KAUFEN, WATCH
 
+  // Load saved settings on mount
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem("consors_settings") || "{}");
+      if (saved.email) setEmail(saved.email);
+      if (saved.emailCfg) setEmailCfg(saved.emailCfg);
+    } catch {}
+  }, []);
+
+  // Save settings whenever they change
+  useEffect(() => {
+    try {
+      if (email || emailCfg.service) {
+        window.localStorage.setItem("consors_settings", JSON.stringify({ email, emailCfg }));
+      }
+    } catch {}
+  }, [email, emailCfg]);
+
   useEffect(() => { const t=setInterval(()=>setClock(new Date()),1000); return ()=>clearInterval(t); }, []);
 
   const fetchPrices = useCallback(async (tickers) => {
