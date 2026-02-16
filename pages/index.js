@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Head from "next/head";
 
 const SECTORS = [
@@ -125,6 +125,23 @@ export default function App() {
     log(""); log("━".repeat(35)); log("✅ VOLLSCAN ABGESCHLOSSEN");
     setScanRunning(false);
   }, [scanSector, fetchNews]);
+
+  // Auto-scan on first load
+  const hasAutoScanned = useRef(false);
+  useEffect(() => {
+    if (!hasAutoScanned.current) {
+      hasAutoScanned.current = true;
+      setTimeout(() => runFullScan(), 2000);
+    }
+  }, [runFullScan]);
+
+  // Auto-scan every 30 minutes
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (!scanRunning) runFullScan();
+    }, 30 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [runFullScan, scanRunning]);
 
   const allStocks = Object.entries(prices).map(([t,d])=>({ticker:t,...d})).sort((a,b)=>a.change-b.change);
   const shortCount = allStocks.filter(s=>s.change<-3).length;
