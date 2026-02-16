@@ -1,28 +1,30 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Head from "next/head";
 
-// ─── CONFIG ─────────────────────────────────────────────────────────
 const SECTORS = [
-  { id: "sw", name: "Enterprise Software", icon: "⚙️", tickers: ["SAP", "ORCL", "CRM", "WDAY"], threat: "Claude Cowork, Cursor, Devin ersetzen Business-Software" },
-  { id: "fd", name: "Finanzdaten & Ratings", icon: "📊", tickers: ["FDS", "MCO", "SPGI", "NDAQ"], threat: "KI-Finanzanalyse ersetzt Datenanbieter" },
-  { id: "fa", name: "Finanzberatung", icon: "🏦", tickers: ["SCHW", "LPLA", "AMP", "RJF"], threat: "Altruist Hazel automatisiert Steuerberatung" },
-  { id: "co", name: "IT-Beratung", icon: "💼", tickers: ["ACN", "EPAM", "IT", "GLOB"], threat: "KI-Coding bedroht Consulting-Margen" },
-  { id: "ed", name: "Bildung", icon: "🎓", tickers: ["CHGG", "DUOL", "COUR"], threat: "ChatGPT als Tutor macht Plattformen obsolet" },
+  { id:"sw", name:"Enterprise Software", icon:"⚙️", tickers:["SAP","ORCL","CRM","WDAY"] },
+  { id:"fd", name:"Finanzdaten & Ratings", icon:"📊", tickers:["FDS","MCO","SPGI","NDAQ"] },
+  { id:"fa", name:"Finanzberatung", icon:"🏦", tickers:["SCHW","LPLA","AMP","RJF"] },
+  { id:"co", name:"IT-Beratung", icon:"💼", tickers:["ACN","EPAM","IT","GLOB"] },
+  { id:"ed", name:"Bildung", icon:"🎓", tickers:["CHGG","DUOL","COUR"] },
+  { id:"ph", name:"Pharma & Biotech", icon:"💊", tickers:["PFE","JNJ","MRNA","ABBV"] },
+  { id:"re", name:"Immobilien", icon:"🏠", tickers:["SPG","AMT","O","PLD"] },
+  { id:"en", name:"Energie", icon:"⚡", tickers:["XOM","CVX","NEE","ENPH"] },
+  { id:"au", name:"Automobil", icon:"🚗", tickers:["TSLA","TM","F"] },
+  { id:"me", name:"Medien & Werbung", icon:"🎬", tickers:["DIS","NFLX","PARA","WBD"] },
+  { id:"in", name:"Versicherung", icon:"🛡️", tickers:["ALL","MET","PRU"] },
+  { id:"rt", name:"Einzelhandel", icon:"🛒", tickers:["AMZN","WMT","TGT","BABA"] },
 ];
 
-const AUTO_REFRESH_MS = 120_000; // 2 min
+const M = "'IBM Plex Mono',monospace";
+const fmt = (n,d=2) => typeof n==="number" ? n.toFixed(d) : "—";
+const pct = n => typeof n==="number" ? `${n>0?"+":""}${n.toFixed(1)}%` : "—";
 
-// ─── HELPERS ────────────────────────────────────────────────────────
-const cx = (...args) => args.filter(Boolean).join(" ");
-const fmt = (n, d = 2) => (typeof n === "number" ? n.toFixed(d) : "—");
-const pct = (n) => (typeof n === "number" ? `${n > 0 ? "+" : ""}${n.toFixed(1)}%` : "—");
-
-// ─── MAIN APP ───────────────────────────────────────────────────────
 export default function App() {
   const [tab, setTab] = useState("dashboard");
   const [prices, setPrices] = useState({});
-  const [products, setProducts] = useState({});
   const [signals, setSignals] = useState({});
+  const [products, setProducts] = useState({});
   const [news, setNews] = useState([]);
   const [tradeIdeas, setTradeIdeas] = useState([]);
   const [alerts, setAlerts] = useState([]);
@@ -31,506 +33,367 @@ export default function App() {
   const [scanLog, setScanLog] = useState([]);
   const [scanRunning, setScanRunning] = useState(false);
   const [clock, setClock] = useState(new Date());
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [email, setEmail] = useState("");
+  const [emailCfg, setEmailCfg] = useState({ service:"", template:"", key:"" });
+  const [filter, setFilter] = useState("ALL"); // ALL, SHORT, KAUFEN, WATCH
 
-  useEffect(() => { const t = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(t); }, []);
+  useEffect(() => { const t=setInterval(()=>setClock(new Date()),1000); return ()=>clearInterval(t); }, []);
 
-  // ── Fetch prices from our API route (Yahoo Finance) ──
   const fetchPrices = useCallback(async (tickers) => {
     try {
       const r = await fetch(`/api/stocks?tickers=${tickers.join(",")}`);
-      const data = await r.json();
-      const map = {};
-      for (const s of data.stocks || []) {
-        if (!s.error) {
-          map[s.ticker] = s;
-          setHistory(prev => ({
-            ...prev,
-            [s.ticker]: [...(prev[s.ticker] || []).slice(-29), s.price],
-          }));
-        }
-      }
-      setPrices(prev => ({ ...prev, ...map }));
-      return map;
-    } catch (e) {
-      return {};
-    }
+      const d = await r.json(); const m = {};
+      for (const s of d.stocks||[]) { if(!s.error) { m[s.ticker]=s; setHistory(p=>({...p,[s.ticker]:[...(p[s.ticker]||[]).slice(-29),s.price]})); } }
+      setPrices(p=>({...p,...m})); return m;
+    } catch { return {}; }
   }, []);
 
-  // ── Fetch products from our API route ──
-  const fetchProducts = useCallback(async (ticker, price) => {
+  const fetchSignal = useCallback(async (ticker,price,change,sector,high52,low52) => {
     try {
-      const r = await fetch(`/api/products?ticker=${ticker}&price=${price}`);
-      const data = await r.json();
-      setProducts(prev => ({ ...prev, [ticker]: { items: data.products || [], time: new Date() } }));
-      return data.products || [];
-    } catch {
-      return [];
-    }
-  }, []);
-
-  // ── Generate signal from our API route (local logic, no cost) ──
-  const fetchSignal = useCallback(async (ticker, price, change, sector) => {
-    try {
-      const r = await fetch(`/api/signal?ticker=${ticker}&price=${price}&change=${change}&sector=${encodeURIComponent(sector)}`);
+      const r = await fetch(`/api/signal?ticker=${ticker}&price=${price}&change=${change}&sector=${encodeURIComponent(sector)}&week_high=${high52||""}&week_low=${low52||""}`);
       const sig = await r.json();
-      setSignals(prev => ({ ...prev, [ticker]: sig }));
-      if (sig.signal === "SHORT" && sig.confidence >= 7) {
-        setTradeIdeas(prev => {
-          if (prev.find(t => t.ticker === ticker)) return prev;
-          return [{ ...sig, id: Date.now(), sectorName: sector }, ...prev];
-        });
-        setAlerts(prev => [{
-          id: Date.now(), type: "TRADE",
-          msg: `🔴 SHORT ${ticker} @ $${price} (${pct(change)}) — Konfidenz ${sig.confidence}/10`,
-          time: new Date(),
-        }, ...prev.slice(0, 29)]);
+      setSignals(p=>({...p,[ticker]:sig}));
+      if ((sig.signal==="SHORT"||sig.signal==="KAUFEN") && sig.confidence>=6) {
+        setTradeIdeas(p => { if(p.find(t=>t.ticker===ticker)) return p; return [{...sig,id:Date.now(),sectorName:sector},...p]; });
+        const a = { id:Date.now(), type:sig.signal, msg:`${sig.signal==="SHORT"?"🔴":"🟢"} ${sig.signal}: ${ticker} @ $${price} (${pct(change)}) — Konfidenz ${sig.confidence}/10`, time:new Date() };
+        setAlerts(p=>[a,...p.slice(0,39)]);
+        if (email) sendAlert(sig);
       }
       return sig;
-    } catch {
-      return null;
-    }
+    } catch { return null; }
+  }, [email]);
+
+  const fetchProducts = useCallback(async (ticker,price) => {
+    try { const r=await fetch(`/api/products?ticker=${ticker}&price=${price}`); const d=await r.json(); setProducts(p=>({...p,[ticker]:{items:d.products||[],time:new Date()}})); } catch {}
   }, []);
 
-  // ── Fetch news ──
   const fetchNews = useCallback(async () => {
-    try {
-      const r = await fetch("/api/news");
-      const data = await r.json();
-      if (data.news?.length) setNews(data.news);
-    } catch {}
+    try { const r=await fetch("/api/news"); const d=await r.json(); if(d.news?.length) setNews(d.news); } catch {}
   }, []);
 
-  // ── Full sector scan ──
-  const scanSector = useCallback(async (sector) => {
-    const log = (m) => setScanLog(p => [...p, { msg: m, time: new Date() }]);
-    log(`🔍 ${sector.name}: Lade Kurse...`);
-    setLoading(p => ({ ...p, [sector.id]: true }));
+  const sendAlert = async (sig) => {
+    try {
+      await fetch("/api/alert", { method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ email, ...sig, emailjs_service:emailCfg.service, emailjs_template:emailCfg.template, emailjs_key:emailCfg.key }) });
+    } catch {}
+  };
 
+  const scanSector = useCallback(async (sector) => {
+    const log = m => setScanLog(p=>[...p,{msg:m,time:new Date()}]);
+    log(`🔍 ${sector.name}: Lade Kurse...`);
+    setLoading(p=>({...p,[sector.id]:true}));
     const data = await fetchPrices(sector.tickers);
     const loaded = Object.keys(data);
-    log(`✅ ${loaded.length}/${sector.tickers.length} Kurse geladen`);
-
-    const shorts = loaded.filter(t => data[t].change < -2);
-    if (shorts.length > 0) {
-      log(`📉 ${shorts.length} Short-Kandidaten: ${shorts.join(", ")}`);
-      for (const t of shorts.slice(0, 3)) {
-        log(`  🏦 Suche Produkte für ${t}...`);
+    log(`✅ ${loaded.length} Kurse geladen`);
+    const candidates = loaded.filter(t => data[t].change < -2 || data[t].fromHigh < -20);
+    if (candidates.length > 0) {
+      log(`📉 ${candidates.length} Kandidaten: ${candidates.join(", ")}`);
+      for (const t of candidates.slice(0,4)) {
+        log(`  🤖 Analysiere ${t}...`);
+        await fetchSignal(t, data[t].price, data[t].change, sector.name, data[t].high52, data[t].low52);
         await fetchProducts(t, data[t].price);
-        log(`  🤖 Generiere Signal für ${t}...`);
-        await fetchSignal(t, data[t].price, data[t].change, sector.name);
       }
-    } else {
-      log(`ℹ️ Keine Aktien unter -2%`);
-    }
-
-    setLoading(p => ({ ...p, [sector.id]: false }));
+    } else { log(`ℹ️ Keine Kandidaten in ${sector.name}`); }
+    setLoading(p=>({...p,[sector.id]:false}));
     log(`✅ ${sector.name} fertig`);
-  }, [fetchPrices, fetchProducts, fetchSignal]);
+  }, [fetchPrices, fetchSignal, fetchProducts]);
 
-  // ── Full market scan ──
   const runFullScan = useCallback(async () => {
-    setScanRunning(true);
-    setScanLog([]);
-    const log = (m) => setScanLog(p => [...p, { msg: m, time: new Date() }]);
-
-    log("🚀 VOLLSCAN GESTARTET");
-    log("━".repeat(35));
-
-    log("📰 Lade News...");
-    await fetchNews();
-    log("✅ News geladen");
-
-    for (const sector of SECTORS) {
-      log("");
-      await scanSector(sector);
-    }
-
-    log("");
-    log("━".repeat(35));
-    log("✅ VOLLSCAN ABGESCHLOSSEN");
+    setScanRunning(true); setScanLog([]);
+    const log = m => setScanLog(p=>[...p,{msg:m,time:new Date()}]);
+    log("🚀 VOLLSCAN — 12 SEKTOREN"); log("━".repeat(35));
+    log("📰 News laden..."); await fetchNews(); log("✅ News geladen");
+    for (const s of SECTORS) { log(""); await scanSector(s); }
+    log(""); log("━".repeat(35)); log("✅ VOLLSCAN ABGESCHLOSSEN");
     setScanRunning(false);
   }, [scanSector, fetchNews]);
 
-  // Auto-refresh
-  useEffect(() => {
-    if (!autoRefresh) return;
-    const t = setInterval(() => {
-      const allTickers = SECTORS.flatMap(s => s.tickers);
-      const loaded = allTickers.filter(t => prices[t]);
-      if (loaded.length > 0) fetchPrices(loaded);
-    }, AUTO_REFRESH_MS);
-    return () => clearInterval(t);
-  }, [autoRefresh, prices, fetchPrices]);
+  const allStocks = Object.entries(prices).map(([t,d])=>({ticker:t,...d})).sort((a,b)=>a.change-b.change);
+  const shortCount = allStocks.filter(s=>s.change<-3).length;
+  const dipCount = Object.values(signals).filter(s=>s.signal==="KAUFEN").length;
+  const filteredIdeas = filter==="ALL" ? tradeIdeas : tradeIdeas.filter(i=> filter==="SHORT"?i.strategy==="short": filter==="KAUFEN"?i.strategy==="dip":true);
 
-  // Derived data
-  const allStocks = Object.entries(prices)
-    .map(([t, d]) => ({ ticker: t, ...d }))
-    .sort((a, b) => a.change - b.change);
-  const shortCount = allStocks.filter(s => s.change < -3).length;
+  return (<>
+    <Head><title>Consors Disruptor V2</title><meta name="viewport" content="width=device-width,initial-scale=1"/><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet"/></Head>
+    <style jsx global>{`
+      :root{--bg:#06060b;--card:#0d0d18;--brd:rgba(255,255,255,.05);--txt:#e2e2ec;--mut:#5f5f78;--red:#ff2d55;--grn:#30d158;--org:#ff9500;--blu:#0a84ff;--yl:#ffd60a;--pur:#bf5af2}
+      *{box-sizing:border-box;margin:0;padding:0}body{background:var(--bg);color:var(--txt);font-family:'Outfit',sans-serif}
+      ::-webkit-scrollbar{width:5px}::-webkit-scrollbar-thumb{background:#222;border-radius:3px}
+      @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+      @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}@keyframes glow{0%,100%{box-shadow:0 0 12px #ff2d5510}50%{box-shadow:0 0 28px #ff2d5525}}
+      @keyframes glowGreen{0%,100%{box-shadow:0 0 12px #30d15810}50%{box-shadow:0 0 28px #30d15825}}
+      .fade{animation:fadeUp .3s ease both}.card{background:var(--card);border:1px solid var(--brd);border-radius:10px;padding:14px;transition:all .2s}
+      .badge{padding:2px 7px;border-radius:3px;font-size:10px;font-weight:700;font-family:${M};letter-spacing:.03em;display:inline-block}
+      button{font-family:'Outfit',sans-serif;cursor:pointer}.mono{font-family:${M}}
+      .shimmer{background:linear-gradient(90deg,#0d0d18 25%,#181830 50%,#0d0d18 75%);background-size:200% 100%;animation:shimmer 1.5s infinite;border-radius:8px;height:60px}
+    `}</style>
 
-  return (
-    <>
-      <Head>
-        <title>Consors Disruptor — KI-Disruption Trading</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-      </Head>
-
-      <style jsx global>{`
-        :root {
-          --bg: #06060b; --card: #0d0d18; --brd: rgba(255,255,255,.05);
-          --txt: #e2e2ec; --mut: #5f5f78; --m: 'IBM Plex Mono', monospace;
-          --s: 'Outfit', sans-serif; --red: #ff2d55; --grn: #30d158;
-          --org: #ff9500; --blu: #0a84ff; --yl: #ffd60a;
-        }
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: var(--bg); color: var(--txt); font-family: var(--s); }
-        ::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-thumb { background: #222; border-radius: 3px; }
-        @keyframes blink { 0%,100% { opacity:1 } 50% { opacity:.3 } }
-        @keyframes fadeUp { from { opacity:0; transform:translateY(8px) } to { opacity:1; transform:translateY(0) } }
-        @keyframes slideR { from { opacity:0; transform:translateX(-8px) } to { opacity:1; transform:translateX(0) } }
-        @keyframes shimmer { 0% { background-position:-200% 0 } 100% { background-position:200% 0 } }
-        @keyframes glow { 0%,100% { box-shadow:0 0 12px #ff2d5510 } 50% { box-shadow:0 0 28px #ff2d5525 } }
-        @keyframes scan { 0% { top:-1px } 100% { top:100% } }
-        .shimmer { background:linear-gradient(90deg,#0d0d18 25%,#181830 50%,#0d0d18 75%); background-size:200% 100%; animation:shimmer 1.5s infinite; border-radius:8px; height:60px; }
-        .fade { animation: fadeUp .35s ease both; }
-        .card { background:var(--card); border:1px solid var(--brd); border-radius:10px; padding:14px; transition:all .2s; }
-        .card-glow { box-shadow:0 0 20px #ff2d5515; border-color:#ff2d5530; animation:glow 3s ease-in-out infinite; }
-        .badge { padding:2px 7px; border-radius:3px; font-size:10px; font-weight:700; font-family:var(--m); letter-spacing:.03em; display:inline-block; }
-        button { font-family:var(--s); cursor:pointer; }
-        .mono { font-family: var(--m); }
-      `}</style>
-
-      {/* Scanline */}
-      <div style={{ position:"fixed", inset:0, pointerEvents:"none", zIndex:100, overflow:"hidden", opacity:.012 }}>
-        <div style={{ position:"absolute", width:"100%", height:1, background:"#fff", animation:"scan 5s linear infinite" }} />
+    {/* HEADER */}
+    <header style={{padding:"10px 18px",borderBottom:"1px solid var(--brd)",display:"flex",justifyContent:"space-between",alignItems:"center",background:"rgba(6,6,11,.94)",backdropFilter:"blur(16px)",position:"sticky",top:0,zIndex:50}}>
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        <span style={{fontSize:18}}>⚡</span>
+        <div>
+          <h1 className="mono" style={{fontSize:14,fontWeight:700,background:"linear-gradient(135deg,#ff2d55,#ff6b35)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>CONSORS DISRUPTOR V2</h1>
+          <div className="mono" style={{fontSize:7,color:"var(--mut)",letterSpacing:".1em"}}>12 SEKTOREN · DUAL-STRATEGIE · 100% KOSTENLOS</div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:4,padding:"2px 7px",borderRadius:3,background:"#30d15810",border:"1px solid #30d15818"}}>
+          <span style={{width:6,height:6,borderRadius:"50%",background:"var(--grn)",animation:"blink 1.5s infinite",display:"inline-block"}}/><span className="mono" style={{fontSize:8,color:"var(--grn)"}}>FREE</span>
+        </div>
       </div>
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        <span className="mono" style={{fontSize:10,color:"var(--mut)"}}>{clock.toLocaleTimeString("de-DE")}</span>
+        {alerts.length>0&&<span className="mono" style={{fontSize:9,color:"var(--red)"}}>🔔{alerts.length}</span>}
+      </div>
+    </header>
 
-      {/* ── HEADER ── */}
-      <header style={{ padding:"10px 18px", borderBottom:"1px solid var(--brd)", display:"flex", justifyContent:"space-between", alignItems:"center", background:"rgba(6,6,11,.94)", backdropFilter:"blur(16px)", position:"sticky", top:0, zIndex:50 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-          <span style={{ fontSize:18 }}>⚡</span>
-          <div>
-            <h1 className="mono" style={{ fontSize:14, fontWeight:700, background:"linear-gradient(135deg,#ff2d55,#ff6b35)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>CONSORS DISRUPTOR</h1>
-            <div className="mono" style={{ fontSize:8, color:"var(--mut)", letterSpacing:".1em" }}>100% KOSTENLOS · YAHOO FINANCE · KEINE API-KOSTEN</div>
+    {/* TABS */}
+    <nav style={{display:"flex",borderBottom:"1px solid var(--brd)",background:"rgba(6,6,11,.5)",padding:"0 14px",overflowX:"auto",gap:0}}>
+      {[{id:"dashboard",l:"Dashboard",e:"📊"},{id:"scan",l:"Scanner",e:"🔍"},{id:"trades",l:"Trade-Ideen",e:"🎯",c:tradeIdeas.length},{id:"products",l:"Produkte",e:"🏦",c:Object.keys(products).length},{id:"news",l:"News",e:"📰",c:news.length},{id:"alerts",l:"Alerts",e:"🔔",c:alerts.length},{id:"settings",l:"Einstellungen",e:"⚙️"}].map(t=>(
+        <button key={t.id} onClick={()=>{setTab(t.id);if(t.id==="news"&&!news.length)fetchNews();}} style={{padding:"8px 12px",background:"none",border:"none",borderBottom:tab===t.id?"2px solid var(--red)":"2px solid transparent",color:tab===t.id?"var(--txt)":"var(--mut)",fontSize:10,fontWeight:600,display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>
+          {t.e} {t.l}{t.c>0&&<span className="mono" style={{fontSize:8,padding:"1px 4px",borderRadius:3,background:"#ff2d5518",color:"var(--red)"}}>{t.c}</span>}
+        </button>
+      ))}
+    </nav>
+
+    <main style={{padding:18,maxWidth:960,margin:"0 auto",paddingBottom:60}}>
+
+      {/* ═══ DASHBOARD ═══ */}
+      {tab==="dashboard"&&(<div className="fade">
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+          <div><h2 style={{fontSize:18,fontWeight:300}}>Dashboard</h2><p style={{fontSize:11,color:"var(--mut)"}}>12 Branchen · Short + Buy-the-Dip · Yahoo Finance Live</p></div>
+          <button onClick={runFullScan} disabled={scanRunning} style={{padding:"8px 18px",background:scanRunning?"#33333a":"linear-gradient(135deg,#ff2d55,#ff6b35)",border:"none",borderRadius:6,color:"#fff",fontSize:11,fontWeight:700,fontFamily:M}}>{scanRunning?"⏳ LÄUFT...":"🚀 VOLLSCAN"}</button>
+        </div>
+
+        {/* Stats */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6,marginBottom:16}}>
+          {[{l:"AKTIEN",v:allStocks.length,c:"var(--blu)"},{l:"SHORT",v:shortCount,c:"var(--red)"},{l:"BUY DIP",v:dipCount,c:"var(--grn)"},{l:"IDEEN",v:tradeIdeas.length,c:"var(--org)"},{l:"ALERTS",v:alerts.length,c:"var(--yl)"}].map((c,i)=>(
+            <div key={i} className="card fade" style={{animationDelay:`${i*.04}s`}}>
+              <div className="mono" style={{fontSize:7,letterSpacing:".1em",color:"var(--mut)",marginBottom:4}}>{c.l}</div>
+              <div className="mono" style={{fontSize:22,fontWeight:700,color:c.c}}>{c.v}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Sectors Grid */}
+        <div className="mono" style={{fontSize:8,letterSpacing:".1em",color:"var(--mut)",marginBottom:6}}>12 SEKTOREN</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6,marginBottom:16}}>
+          {SECTORS.map((sec,i)=>{
+            const avg=sec.tickers.map(t=>prices[t]?.change).filter(c=>c!==undefined);
+            const avgCh=avg.length?avg.reduce((a,b)=>a+b,0)/avg.length:null;
+            return(<button key={sec.id} onClick={()=>scanSector(sec)} disabled={scanRunning} className="card fade" style={{border:"1px solid var(--brd)",textAlign:"center",cursor:"pointer",opacity:scanRunning?.5:1,animationDelay:`${i*.03}s`,color:"var(--txt)",padding:10}}>
+              <div style={{fontSize:16,marginBottom:2}}>{sec.icon}</div>
+              <div style={{fontSize:8,fontWeight:600,marginBottom:2}}>{sec.name}</div>
+              {avgCh!==null&&<div className="mono" style={{fontSize:10,fontWeight:700,color:avgCh<0?"var(--red)":"var(--grn)"}}>{pct(avgCh)}</div>}
+              {loading[sec.id]&&<div style={{fontSize:7,color:"var(--org)",marginTop:2}}>⏳</div>}
+            </button>);
+          })}
+        </div>
+
+        {/* Stock List */}
+        {allStocks.length>0&&(<>
+          <div className="mono" style={{fontSize:8,letterSpacing:".1em",color:"var(--mut)",marginBottom:6}}>ALLE AKTIEN ({allStocks.length})</div>
+          <div style={{display:"flex",flexDirection:"column",gap:2}}>
+            {allStocks.map((s,i)=>{
+              const sig=signals[s.ticker];
+              const sigColor=sig?.signal==="SHORT"?"var(--red)":sig?.signal==="KAUFEN"?"var(--grn)":sig?.signal?.includes("WATCH")?"var(--org)":"var(--mut)";
+              return(<div key={s.ticker} className="fade" style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:"var(--card)",borderRadius:6,borderLeft:`2px solid ${s.change<-5?"var(--red)":s.change<-2?"var(--org)":s.change<0?"var(--yl)":"var(--grn)"}`,animationDelay:`${i*.02}s`,fontSize:11}}>
+                <span className="mono" style={{fontWeight:700,minWidth:40,color:s.change<-5?"var(--red)":"var(--txt)"}}>{s.ticker}</span>
+                <MiniChart data={history[s.ticker]||s.history||[s.price]}/>
+                <span style={{fontSize:9,color:"var(--mut)",flex:1}}>{s.name?.slice(0,20)}</span>
+                <span className="mono" style={{fontSize:11}}>{s.currency==="EUR"?"€":"$"}{fmt(s.price)}</span>
+                <span className="mono" style={{fontSize:10,fontWeight:700,minWidth:48,textAlign:"right",color:s.change<0?"var(--red)":"var(--grn)"}}>{pct(s.change)}</span>
+                {s.fromHigh&&<span className="mono" style={{fontSize:8,color:"var(--mut)",minWidth:40}}>{s.fromHigh.toFixed(0)}% v.H</span>}
+                {sig&&<span className="badge" style={{background:`${sigColor}18`,color:sigColor,fontSize:8}}>{sig.signal}</span>}
+              </div>);
+            })}
           </div>
-          <div style={{ display:"flex", alignItems:"center", gap:4, padding:"2px 7px", borderRadius:3, background:"#30d15810", border:"1px solid #30d15818" }}>
-            <span style={{ width:6, height:6, borderRadius:"50%", background:"var(--grn)", animation:"blink 1.5s infinite", display:"inline-block" }} />
-            <span className="mono" style={{ fontSize:8, color:"var(--grn)" }}>FREE</span>
+        </>)}
+      </div>)}
+
+      {/* ═══ SCANNER ═══ */}
+      {tab==="scan"&&(<div className="fade">
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+          <h2 style={{fontSize:18,fontWeight:300}}>Markt-Scanner</h2>
+          <button onClick={runFullScan} disabled={scanRunning} style={{padding:"8px 18px",background:scanRunning?"#33333a":"linear-gradient(135deg,#ff2d55,#ff6b35)",border:"none",borderRadius:6,color:"#fff",fontSize:11,fontWeight:700,fontFamily:M}}>{scanRunning?"⏳":"🚀 VOLLSCAN"}</button>
+        </div>
+        <p style={{color:"var(--mut)",fontSize:11,marginBottom:12,lineHeight:1.5}}>Scannt 12 Sektoren (45+ Aktien): Kurse → Kandidaten (fallend ODER überverkauft) → Dual-Signal (Short vs. Buy-the-Dip) → Produkte</p>
+        <div className="card mono" style={{fontSize:10,maxHeight:500,overflowY:"auto"}}>
+          {scanLog.length===0?<div style={{color:"var(--mut)",textAlign:"center",padding:30}}>Klicke VOLLSCAN</div>:
+          scanLog.map((l,i)=>(<div key={i} style={{padding:"2px 0",color:l.msg.startsWith("✅")?"var(--grn)":l.msg.startsWith("🔴")?"var(--red)":l.msg.includes("━")?"var(--mut)":"var(--txt)"}}>
+            <span style={{color:"var(--mut)",marginRight:8}}>{l.time.toLocaleTimeString("de-DE")}</span>{l.msg}
+          </div>))}
+          {scanRunning&&<div style={{marginTop:6,color:"var(--org)"}}><span style={{width:6,height:6,borderRadius:"50%",background:"var(--org)",animation:"blink 1s infinite",display:"inline-block",marginRight:6}}/>Aktiv...</div>}
+        </div>
+      </div>)}
+
+      {/* ═══ TRADE IDEAS ═══ */}
+      {tab==="trades"&&(<div className="fade">
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+          <h2 style={{fontSize:18,fontWeight:300}}>Trade-Ideen ({tradeIdeas.length})</h2>
+          <div style={{display:"flex",gap:4}}>
+            {["ALL","SHORT","KAUFEN"].map(f=>(<button key={f} onClick={()=>setFilter(f)} style={{padding:"4px 10px",borderRadius:4,border:"none",fontSize:9,fontWeight:700,fontFamily:M,background:filter===f?(f==="SHORT"?"#ff2d5520":f==="KAUFEN"?"#30d15820":"#0a84ff20"):"rgba(255,255,255,.03)",color:filter===f?(f==="SHORT"?"var(--red)":f==="KAUFEN"?"var(--grn)":"var(--blu)"):"var(--mut)"}}>{f}</button>))}
           </div>
         </div>
-        <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-          <label style={{ display:"flex", alignItems:"center", gap:4, fontSize:9, color:"var(--mut)", cursor:"pointer" }}>
-            <input type="checkbox" checked={autoRefresh} onChange={() => setAutoRefresh(!autoRefresh)} style={{ accentColor:"var(--grn)" }} />
-            Auto-Refresh
-          </label>
-          <span className="mono" style={{ fontSize:10, color:"var(--mut)" }}>{clock.toLocaleTimeString("de-DE")}</span>
-          {alerts.length > 0 && <span className="mono" style={{ fontSize:9, color:"var(--red)" }}>🔔 {alerts.length}</span>}
-        </div>
-      </header>
+        <p style={{color:"var(--mut)",fontSize:10,marginBottom:12}}>🔴 SHORT = auf weiteren Fall wetten · 🟢 KAUFEN = günstig einsteigen nach Überreaktion</p>
 
-      {/* ── TABS ── */}
-      <nav style={{ display:"flex", borderBottom:"1px solid var(--brd)", background:"rgba(6,6,11,.5)", padding:"0 18px", overflowX:"auto" }}>
-        {[
-          { id:"dashboard", l:"Dashboard", e:"📊" },
-          { id:"scan", l:"Scanner", e:"🔍" },
-          { id:"trades", l:"Trade-Ideen", e:"🎯", c:tradeIdeas.length },
-          { id:"products", l:"Produkte", e:"🏦", c:Object.keys(products).length },
-          { id:"news", l:"News", e:"📰", c:news.length },
-          { id:"alerts", l:"Alerts", e:"🔔", c:alerts.length },
-          { id:"howto", l:"Anleitung", e:"📋" },
-        ].map(t => (
-          <button key={t.id} onClick={() => { setTab(t.id); if (t.id === "news" && !news.length) fetchNews(); }}
-            style={{ padding:"9px 13px", background:"none", border:"none", borderBottom:tab === t.id ? "2px solid var(--red)" : "2px solid transparent",
-              color:tab === t.id ? "var(--txt)" : "var(--mut)", fontSize:10, fontWeight:600, display:"flex", alignItems:"center", gap:5, whiteSpace:"nowrap" }}>
-            {t.e} {t.l}
-            {t.c > 0 && <span className="mono" style={{ fontSize:8, padding:"1px 4px", borderRadius:3, background:"#ff2d5518", color:"var(--red)" }}>{t.c}</span>}
-          </button>
-        ))}
-      </nav>
-
-      {/* ── CONTENT ── */}
-      <main style={{ padding:18, maxWidth:920, margin:"0 auto", paddingBottom:60 }}>
-
-        {/* ═══ DASHBOARD ═══ */}
-        {tab === "dashboard" && (
-          <div className="fade">
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
-              <div>
-                <h2 style={{ fontSize:18, fontWeight:300 }}>Dashboard</h2>
-                <p style={{ fontSize:11, color:"var(--mut)" }}>Yahoo Finance Echtzeit-Daten · Kein API-Key nötig</p>
+        {filteredIdeas.length===0?<div className="card" style={{textAlign:"center",padding:40,color:"var(--mut)",fontSize:11}}>Starte Vollscan für Ideen</div>:
+        filteredIdeas.map((idea,i)=>{
+          const isShort=idea.strategy==="short";
+          const color=isShort?"var(--red)":"var(--grn)";
+          const glowClass=idea.confidence>=8?(isShort?"":""):"";
+          return(<div key={idea.id} className="card fade" style={{marginBottom:10,animationDelay:`${i*.05}s`,borderColor:idea.confidence>=8?`${color}40`:"var(--brd)",...(idea.confidence>=8?{boxShadow:`0 0 20px ${color}15`,animation:`${isShort?"glow":"glowGreen"} 3s ease-in-out infinite`}:{})}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span className="mono" style={{fontSize:18,fontWeight:700}}>{idea.ticker}</span>
+                <span className="badge" style={{background:`${color}18`,color}}>{idea.signal}</span>
+                <span className="badge" style={{background:`${idea.confidence>=8?color:"var(--org)"}18`,color:idea.confidence>=8?color:"var(--org)"}}>{idea.confidence}/10</span>
+                <span style={{fontSize:9,color:"var(--mut)"}}>{idea.sectorName}</span>
               </div>
-              <button onClick={runFullScan} disabled={scanRunning}
-                style={{ padding:"8px 18px", background:scanRunning ? "#33333a" : "linear-gradient(135deg,#ff2d55,#ff6b35)",
-                  border:"none", borderRadius:6, color:"#fff", fontSize:11, fontWeight:700, fontFamily:"var(--m)", opacity:scanRunning ? .6 : 1 }}>
-                {scanRunning ? "⏳ LÄUFT..." : "🚀 VOLLSCAN"}
-              </button>
+              <div style={{textAlign:"right"}}>
+                <div className="mono" style={{fontSize:16,fontWeight:700}}>${fmt(idea.price)}</div>
+                <div className="mono" style={{fontSize:11,color}}>{pct(idea.change)}</div>
+              </div>
             </div>
 
-            {/* Stats */}
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginBottom:18 }}>
-              {[
-                { l:"AKTIEN", v:allStocks.length, c:"var(--blu)" },
-                { l:"SHORT-SIGNALE", v:shortCount, c:"var(--red)" },
-                { l:"TRADE-IDEEN", v:tradeIdeas.length, c:"var(--org)" },
-                { l:"ALERTS", v:alerts.length, c:"var(--yl)" },
-              ].map((c,i) => (
-                <div key={i} className="card fade" style={{ animationDelay:`${i*.05}s` }}>
-                  <div className="mono" style={{ fontSize:8, letterSpacing:".1em", color:"var(--mut)", marginBottom:5 }}>{c.l}</div>
-                  <div className="mono" style={{ fontSize:24, fontWeight:700, color:c.c }}>{c.v}</div>
+            {/* Score bars */}
+            <div style={{display:"flex",gap:8,marginBottom:10}}>
+              <div style={{flex:1}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:2}}><span style={{fontSize:8,color:"var(--mut)"}}>Short-Score</span><span className="mono" style={{fontSize:8,color:"var(--red)"}}>{idea.shortScore}</span></div>
+                <div style={{height:4,background:"rgba(255,255,255,.05)",borderRadius:2}}><div style={{height:4,width:`${idea.shortScore}%`,background:"var(--red)",borderRadius:2}}/></div>
+              </div>
+              <div style={{flex:1}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:2}}><span style={{fontSize:8,color:"var(--mut)"}}>Dip-Score</span><span className="mono" style={{fontSize:8,color:"var(--grn)"}}>{idea.dipScore}</span></div>
+                <div style={{height:4,background:"rgba(255,255,255,.05)",borderRadius:2}}><div style={{height:4,width:`${idea.dipScore}%`,background:"var(--grn)",borderRadius:2}}/></div>
+              </div>
+              <div style={{flex:1}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:2}}><span style={{fontSize:8,color:"var(--mut)"}}>Disruption</span><span className="mono" style={{fontSize:8,color:"var(--org)"}}>{idea.disruptionScore}</span></div>
+                <div style={{height:4,background:"rgba(255,255,255,.05)",borderRadius:2}}><div style={{height:4,width:`${idea.disruptionScore}%`,background:"var(--org)",borderRadius:2}}/></div>
+              </div>
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:10}}>
+              {[{l:"PRODUKT",v:idea.product,c:"var(--blu)"},{l:"EINSTIEG",v:idea.entry,c:"var(--txt)"},{l:"STOP-LOSS",v:idea.stopLoss,c:"var(--red)"},{l:"KURSZIEL",v:idea.target,c:"var(--grn)"}].map((f,j)=>(
+                <div key={j} style={{padding:"5px 8px",background:"rgba(255,255,255,.02)",borderRadius:4}}>
+                  <div className="mono" style={{fontSize:7,color:"var(--mut)",letterSpacing:".08em"}}>{f.l}</div>
+                  <div style={{fontSize:10,fontWeight:500,color:f.c,marginTop:1,lineHeight:1.4}}>{f.v}</div>
                 </div>
               ))}
             </div>
 
-            {/* Sector buttons */}
-            <div className="mono" style={{ fontSize:8, letterSpacing:".1em", color:"var(--mut)", marginBottom:8 }}>SEKTOREN</div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:6, marginBottom:18 }}>
-              {SECTORS.map((sec,i) => {
-                const avg = sec.tickers.map(t => prices[t]?.change).filter(c => c !== undefined);
-                const avgCh = avg.length ? avg.reduce((a,b) => a+b, 0) / avg.length : null;
-                return (
-                  <button key={sec.id} onClick={() => scanSector(sec)} disabled={scanRunning}
-                    className="card fade" style={{ border:"1px solid var(--brd)", textAlign:"center", cursor:"pointer",
-                      opacity:scanRunning ? .5 : 1, animationDelay:`${i*.04}s`, color:"var(--txt)" }}>
-                    <div style={{ fontSize:18, marginBottom:3 }}>{sec.icon}</div>
-                    <div style={{ fontSize:9, fontWeight:600, marginBottom:2 }}>{sec.name}</div>
-                    {avgCh !== null && <div className="mono" style={{ fontSize:10, fontWeight:700, color:avgCh < 0 ? "var(--red)" : "var(--grn)" }}>{pct(avgCh)}</div>}
-                    {loading[sec.id] && <div style={{ fontSize:8, color:"var(--org)", marginTop:2 }}>⏳</div>}
-                  </button>
-                );
-              })}
+            <div style={{fontSize:10,color:"var(--mut)",lineHeight:1.5,padding:"6px 8px",background:"rgba(255,255,255,.015)",borderRadius:4,borderLeft:`2px solid ${color}`}}>
+              {idea.reasons?.join(" · ")}
             </div>
+            <div className="mono" style={{fontSize:7,color:"var(--mut)",marginTop:6}}>52W-Hoch: ${fmt(idea.high52)} · Abstand: {idea.fromHigh}% · Risiko: {idea.risk}</div>
+          </div>);
+        })}
+      </div>)}
 
-            {/* Stock list */}
-            {allStocks.length > 0 && (
-              <>
-                <div className="mono" style={{ fontSize:8, letterSpacing:".1em", color:"var(--mut)", marginBottom:8 }}>ALLE AKTIEN</div>
-                <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
-                  {allStocks.map((s,i) => (
-                    <div key={s.ticker} className="fade" style={{
-                      display:"flex", alignItems:"center", gap:10, padding:"7px 11px",
-                      background:"var(--card)", borderRadius:6,
-                      borderLeft:`2px solid ${s.change < -5 ? "var(--red)" : s.change < -2 ? "var(--org)" : s.change < 0 ? "var(--yl)" : "var(--grn)"}`,
-                      animationDelay:`${i*.025}s`,
-                    }}>
-                      <span className="mono" style={{ fontSize:11, fontWeight:700, minWidth:40, color:s.change < -5 ? "var(--red)" : "var(--txt)" }}>{s.ticker}</span>
-                      <MiniChart data={history[s.ticker] || s.history || [s.price]} />
-                      <span style={{ flex:1 }} />
-                      <span className="mono" style={{ fontSize:11 }}>{s.currency === "EUR" ? "€" : "$"}{fmt(s.price)}</span>
-                      <span className="mono" style={{ fontSize:10, fontWeight:700, minWidth:50, textAlign:"right", color:s.change < 0 ? "var(--red)" : "var(--grn)" }}>{pct(s.change)}</span>
-                      {signals[s.ticker] && (
-                        <span className="badge" style={{ background:`${signals[s.ticker].signal === "SHORT" ? "var(--red)" : "var(--org)"}18`, color:signals[s.ticker].signal === "SHORT" ? "var(--red)" : "var(--org)" }}>
-                          {signals[s.ticker].signal}
-                        </span>
-                      )}
-                      {products[s.ticker] && <span style={{ fontSize:9, color:"var(--blu)" }}>🏦</span>}
-                      <span className="mono" style={{ fontSize:8, color:"var(--mut)" }}>{s.exchange}</span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
+      {/* ═══ PRODUCTS ═══ */}
+      {tab==="products"&&(<div className="fade">
+        <h2 style={{fontSize:18,fontWeight:300,marginBottom:12}}>Consorsbank Produkte</h2>
+        {Object.keys(products).length===0?<div className="card" style={{textAlign:"center",padding:40,color:"var(--mut)",fontSize:11}}>Starte Scan für Produkte</div>:
+        Object.entries(products).map(([ticker,data])=>(<div key={ticker} style={{marginBottom:14}} className="fade">
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+            <span className="mono" style={{fontSize:13,fontWeight:700}}>{ticker}</span>
+            {prices[ticker]&&<span className="mono" style={{fontSize:10,color:"var(--mut)"}}>${fmt(prices[ticker].price)} ({pct(prices[ticker].change)})</span>}
+            {signals[ticker]&&<span className="badge" style={{background:`${signals[ticker].strategy==="short"?"var(--red)":"var(--grn)"}18`,color:signals[ticker].strategy==="short"?"var(--red)":"var(--grn)",fontSize:8}}>{signals[ticker].signal}</span>}
           </div>
-        )}
-
-        {/* ═══ SCANNER ═══ */}
-        {tab === "scan" && (
-          <div className="fade">
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
-              <h2 style={{ fontSize:18, fontWeight:300 }}>Markt-Scanner</h2>
-              <button onClick={runFullScan} disabled={scanRunning}
-                style={{ padding:"8px 18px", background:scanRunning ? "#33333a" : "linear-gradient(135deg,#ff2d55,#ff6b35)",
-                  border:"none", borderRadius:6, color:"#fff", fontSize:11, fontWeight:700, fontFamily:"var(--m)" }}>
-                {scanRunning ? "⏳ LÄUFT..." : "🚀 VOLLSCAN"}
-              </button>
+          {data.items.map((p,i)=>(<div key={i} className="card fade" style={{padding:8,marginBottom:3,animationDelay:`${i*.03}s`}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",fontSize:10}}>
+              <span className="badge" style={{background:`${p.type.includes("CALL")?"var(--grn)":p.type.includes("KO")?"var(--red)":"var(--org)"}18`,color:p.type.includes("CALL")?"var(--grn)":p.type.includes("KO")?"var(--red)":"var(--org)",fontSize:8}}>{p.type}</span>
+              <span className="mono" style={{fontWeight:700,color:"var(--blu)"}}>{p.wkn}</span>
+              <span style={{color:"var(--mut)",fontSize:9}}>{p.emittent}</span><span style={{flex:1}}/>
+              <span className="mono" style={{fontSize:8,color:"var(--mut)"}}>Strike:{p.strike}</span>
+              <span className="mono" style={{fontSize:8,color:"var(--org)"}}>Hebel:{p.hebel}x</span>
+              <span className="mono" style={{fontSize:8}}>Bid/Ask:{p.bid}/{p.ask}</span>
+              <span style={{fontSize:8,color:"var(--mut)"}}>{p.laufzeit}</span>
+              {p.isExample&&<span className="mono" style={{fontSize:6,color:"var(--yl)"}}>BEISPIEL</span>}
             </div>
-            <p style={{ color:"var(--mut)", fontSize:11, marginBottom:14, lineHeight:1.6 }}>
-              Scannt alle 5 Sektoren: Kurse von Yahoo Finance → Short-Kandidaten → Consorsbank-Produkte → Signale. Komplett kostenlos.
-            </p>
-            <div className="card mono" style={{ fontSize:10, maxHeight:500, overflowY:"auto" }}>
-              {scanLog.length === 0 ? (
-                <div style={{ color:"var(--mut)", textAlign:"center", padding:30 }}>Klicke VOLLSCAN zum Starten</div>
-              ) : scanLog.map((l,i) => (
-                <div key={i} style={{ padding:"3px 0", color:l.msg.startsWith("✅") ? "var(--grn)" : l.msg.startsWith("🔴") ? "var(--red)" : l.msg.includes("━") ? "var(--mut)" : "var(--txt)" }}>
-                  <span style={{ color:"var(--mut)", marginRight:8 }}>{l.time.toLocaleTimeString("de-DE")}</span>{l.msg}
-                </div>
-              ))}
-              {scanRunning && <div style={{ marginTop:8, color:"var(--org)" }}><span style={{ width:6, height:6, borderRadius:"50%", background:"var(--org)", animation:"blink 1s infinite", display:"inline-block", marginRight:6 }} />Scan aktiv...</div>}
-            </div>
-          </div>
-        )}
+          </div>))}
+        </div>))}
+      </div>)}
 
-        {/* ═══ TRADE IDEAS ═══ */}
-        {tab === "trades" && (
-          <div className="fade">
-            <h2 style={{ fontSize:18, fontWeight:300, marginBottom:4 }}>Trade-Ideen</h2>
-            <p style={{ color:"var(--mut)", fontSize:11, marginBottom:16 }}>Automatisch generiert — WKN in Consorsbank-App suchen zum Kaufen</p>
-            {tradeIdeas.length === 0 ? (
-              <div className="card" style={{ textAlign:"center", padding:40, color:"var(--mut)", fontSize:11 }}>
-                🔍 Starte einen Vollscan um Trade-Ideen zu generieren
-              </div>
-            ) : tradeIdeas.map((idea,i) => (
-              <div key={idea.id} className={`card fade ${idea.confidence >= 8 ? "card-glow" : ""}`} style={{ marginBottom:10, animationDelay:`${i*.05}s` }}>
-                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:10 }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                    <span className="mono" style={{ fontSize:18, fontWeight:700 }}>{idea.ticker}</span>
-                    <span className="badge" style={{ background:"#ff2d5518", color:"var(--red)" }}>SHORT</span>
-                    <span className="badge" style={{ background:`${idea.confidence >= 8 ? "var(--red)" : "var(--org)"}18`, color:idea.confidence >= 8 ? "var(--red)" : "var(--org)" }}>{idea.confidence}/10</span>
-                  </div>
-                  <div style={{ textAlign:"right" }}>
-                    <div className="mono" style={{ fontSize:16, fontWeight:700 }}>${fmt(idea.price)}</div>
-                    <div className="mono" style={{ fontSize:11, color:"var(--red)" }}>{pct(idea.change)}</div>
-                  </div>
-                </div>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6, marginBottom:10 }}>
-                  {[
-                    { l:"PRODUKT", v:idea.product, c:"var(--blu)" },
-                    { l:"EINSTIEG", v:idea.entry, c:"var(--txt)" },
-                    { l:"STOP-LOSS", v:`$${idea.stopLoss}`, c:"var(--red)" },
-                    { l:"KURSZIEL", v:`$${idea.target}`, c:"var(--grn)" },
-                  ].map((f,j) => (
-                    <div key={j} style={{ padding:"6px 8px", background:"rgba(255,255,255,.02)", borderRadius:4 }}>
-                      <div className="mono" style={{ fontSize:8, color:"var(--mut)", letterSpacing:".08em" }}>{f.l}</div>
-                      <div style={{ fontSize:10, fontWeight:600, color:f.c, marginTop:2, lineHeight:1.4 }}>{f.v}</div>
-                    </div>
-                  ))}
-                </div>
-                <div style={{ fontSize:10, color:"var(--mut)", lineHeight:1.5, padding:"8px 10px", background:"rgba(255,255,255,.015)", borderRadius:5, borderLeft:"2px solid var(--org)" }}>
-                  {idea.reasons?.join(" · ")}
-                </div>
-                <div className="mono" style={{ fontSize:8, color:"var(--mut)", marginTop:8 }}>
-                  ⚠️ Risiko: {idea.risk} · Score: {idea.score}/100
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* ═══ PRODUCTS ═══ */}
-        {tab === "products" && (
-          <div className="fade">
-            <h2 style={{ fontSize:18, fontWeight:300, marginBottom:4 }}>Consorsbank Produkte</h2>
-            <p style={{ color:"var(--mut)", fontSize:11, marginBottom:16 }}>KO-Zertifikate & Put-Optionsscheine — WKN in Consorsbank suchen</p>
-            {Object.keys(products).length === 0 ? (
-              <div className="card" style={{ textAlign:"center", padding:40, color:"var(--mut)", fontSize:11 }}>🏦 Starte einen Scan — Produkte werden automatisch gesucht</div>
-            ) : Object.entries(products).map(([ticker, data]) => (
-              <div key={ticker} style={{ marginBottom:16 }} className="fade">
-                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
-                  <span className="mono" style={{ fontSize:14, fontWeight:700 }}>{ticker}</span>
-                  {prices[ticker] && <span className="mono" style={{ fontSize:11, color:"var(--mut)" }}>${fmt(prices[ticker].price)}</span>}
-                </div>
-                {data.items.map((p,i) => (
-                  <div key={i} className="card fade" style={{ padding:10, marginBottom:4, animationDelay:`${i*.03}s` }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
-                      <span className="badge" style={{ background:`${p.type.includes("KO") ? "var(--red)" : "var(--org)"}18`, color:p.type.includes("KO") ? "var(--red)" : "var(--org)" }}>{p.type}</span>
-                      <span className="mono" style={{ fontSize:12, fontWeight:700, color:"var(--blu)" }}>{p.wkn}</span>
-                      <span style={{ fontSize:10, color:"var(--mut)" }}>{p.emittent}</span>
-                      <span style={{ flex:1 }} />
-                      <span className="mono" style={{ fontSize:9, color:"var(--mut)" }}>Strike: {p.strike}</span>
-                      <span className="mono" style={{ fontSize:9, color:"var(--org)" }}>Hebel: {p.hebel}x</span>
-                      <span className="mono" style={{ fontSize:9 }}>Bid/Ask: {p.bid}/{p.ask}</span>
-                      <span style={{ fontSize:8, color:"var(--mut)" }}>{p.laufzeit}</span>
-                      {p.isExample && <span className="mono" style={{ fontSize:7, color:"var(--yl)" }}>BEISPIEL</span>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* ═══ NEWS ═══ */}
-        {tab === "news" && (
-          <div className="fade">
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
-              <h2 style={{ fontSize:18, fontWeight:300 }}>Disruption News</h2>
-              <button onClick={fetchNews} style={{ padding:"6px 12px", background:"#0a84ff15", border:"1px solid #0a84ff25", borderRadius:5, color:"var(--blu)", fontSize:10, fontFamily:"var(--m)" }}>🔄 REFRESH</button>
-            </div>
-            {news.length === 0 ? (
-              <div className="card" style={{ textAlign:"center", padding:40, color:"var(--mut)", fontSize:11 }}>Klicke REFRESH zum Laden</div>
-            ) : news.map((n,i) => (
-              <div key={i} className="card fade" style={{ marginBottom:6, animationDelay:`${i*.04}s` }}>
-                <div style={{ display:"flex", justifyContent:"space-between", gap:10 }}>
-                  <div>
-                    <div style={{ fontSize:11, fontWeight:500, lineHeight:1.4, marginBottom:3 }}>{n.headline}</div>
-                    <div style={{ fontSize:9, color:"var(--mut)" }}>{n.source} {n.sector && `· ${n.sector}`}</div>
-                  </div>
-                  <span className="badge" style={{ background:`${n.impact === "BEARISH" ? "var(--red)" : n.impact === "BULLISH" ? "var(--grn)" : "var(--org)"}18`, color:n.impact === "BEARISH" ? "var(--red)" : n.impact === "BULLISH" ? "var(--grn)" : "var(--org)", flexShrink:0 }}>{n.impact}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* ═══ ALERTS ═══ */}
-        {tab === "alerts" && (
-          <div className="fade">
-            <h2 style={{ fontSize:18, fontWeight:300, marginBottom:16 }}>Alerts</h2>
-            {alerts.length === 0 ? (
-              <div className="card" style={{ textAlign:"center", padding:40, color:"var(--mut)", fontSize:11 }}>Noch keine Alerts — starte einen Scan</div>
-            ) : alerts.map((a,i) => (
-              <div key={a.id} className="fade" style={{
-                display:"flex", alignItems:"center", gap:10, padding:"8px 11px",
-                background:"var(--card)", borderRadius:5, marginBottom:3,
-                borderLeft:`2px solid ${a.type === "TRADE" ? "var(--red)" : "var(--org)"}`,
-                animationDelay:`${i*.03}s`,
-              }}>
-                <span className="mono" style={{ fontSize:10, color:"var(--mut)", minWidth:65 }}>{a.time.toLocaleTimeString("de-DE")}</span>
-                <span style={{ fontSize:10 }}>{a.msg}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* ═══ HOW-TO ═══ */}
-        {tab === "howto" && (
-          <div className="fade">
-            <h2 style={{ fontSize:18, fontWeight:300, marginBottom:16 }}>So funktioniert's</h2>
-            {[
-              { t:"1. Vollscan starten", d:"Klicke '🚀 VOLLSCAN' — das System holt Echtzeit-Kurse von Yahoo Finance (kostenlos) für alle 5 Sektoren.", e:"📊" },
-              { t:"2. Short-Kandidaten", d:"Aktien mit > 2% Verlust werden automatisch als Short-Kandidaten markiert. Je stärker der Rückgang und je höher die KI-Disruptions-Gefahr, desto stärker das Signal.", e:"📉" },
-              { t:"3. Produkte finden", d:"Für jeden Kandidaten sucht das System Knock-Out-Puts und Put-Optionsscheine, die bei der Consorsbank handelbar sind.", e:"🏦" },
-              { t:"4. Trade-Ideen prüfen", d:"Im Tab 'Trade-Ideen' findest du fertige Vorschläge mit Einstieg, Stop-Loss und Kursziel. Produkte mit WKN zum direkten Suchen.", e:"🎯" },
-              { t:"5. In Consorsbank kaufen", d:"Öffne die Consorsbank-App → Suche → WKN eingeben → Kaufen. Immer Stop-Loss setzen!", e:"✅" },
-              { t:"Kosten", d:"0 EUR. Yahoo Finance ist kostenlos, die Signal-Logik läuft lokal, Vercel Hobby-Plan ist gratis. Keine API-Keys, keine versteckten Kosten.", e:"💚" },
-            ].map((step,i) => (
-              <div key={i} className="card fade" style={{ marginBottom:8, animationDelay:`${i*.05}s`, display:"flex", gap:12 }}>
-                <span style={{ fontSize:22 }}>{step.e}</span>
-                <div>
-                  <div style={{ fontWeight:600, fontSize:12, marginBottom:3 }}>{step.t}</div>
-                  <div style={{ fontSize:11, color:"var(--mut)", lineHeight:1.5 }}>{step.d}</div>
-                </div>
-              </div>
-            ))}
-
-            <div className="card" style={{ marginTop:16, borderColor:"#ff2d5530" }}>
-              <div style={{ fontSize:11, color:"var(--red)", fontWeight:600, marginBottom:6 }}>⚠️ Wichtige Hinweise</div>
-              <div style={{ fontSize:10, color:"var(--mut)", lineHeight:1.6 }}>
-                • Keine Anlageberatung — nur Informationszwecke<br/>
-                • Short-Zertifikate können wertlos verfallen<br/>
-                • Immer Stop-Loss setzen, nie mehr als 2% pro Trade riskieren<br/>
-                • Beispiel-WKNs müssen vor Kauf in Consorsbank verifiziert werden<br/>
-                • Max. 5-10% deines Portfolios für spekulative Trades
+      {/* ═══ NEWS ═══ */}
+      {tab==="news"&&(<div className="fade">
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <h2 style={{fontSize:18,fontWeight:300}}>KI-News mit Handelsempfehlung</h2>
+          <button onClick={fetchNews} style={{padding:"5px 12px",background:"#0a84ff15",border:"1px solid #0a84ff25",borderRadius:5,color:"var(--blu)",fontSize:10,fontFamily:M}}>🔄 REFRESH</button>
+        </div>
+        {news.length===0?<div className="card" style={{textAlign:"center",padding:30,color:"var(--mut)",fontSize:11}}>Lade News...</div>:
+        news.map((n,i)=>(<div key={i} className="card fade" style={{marginBottom:5,animationDelay:`${i*.03}s`}}>
+          <div style={{display:"flex",justifyContent:"space-between",gap:8}}>
+            <div style={{flex:1}}>
+              <div style={{fontSize:11,fontWeight:500,lineHeight:1.4,marginBottom:3}}>{n.headline}</div>
+              <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                <span style={{fontSize:9,color:"var(--mut)"}}>{n.source}</span>
+                {n.sector&&<span className="badge" style={{background:"rgba(255,255,255,.04)",color:"var(--mut)",fontSize:7}}>{n.sector}</span>}
+                {n.tickers?.length>0&&n.tickers.map(t=><span key={t} className="mono" style={{fontSize:8,color:"var(--blu)"}}>{t}</span>)}
               </div>
             </div>
+            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:3,flexShrink:0}}>
+              <span className="badge" style={{background:`${n.sentiment?.includes("BEAR")?"var(--red)":n.sentiment?.includes("BULL")?"var(--grn)":"var(--org)"}18`,color:n.sentiment?.includes("BEAR")?"var(--red)":n.sentiment?.includes("BULL")?"var(--grn)":"var(--org)"}}>{n.sentiment}</span>
+              <span className="badge" style={{background:`${n.action==="SHORTEN"?"var(--red)":n.action==="KAUFEN"?"var(--grn)":"var(--yl)"}18`,color:n.action==="SHORTEN"?"var(--red)":n.action==="KAUFEN"?"var(--grn)":"var(--yl)",fontSize:9,fontWeight:700}}>{n.action}</span>
+            </div>
           </div>
-        )}
-      </main>
+        </div>))}
+      </div>)}
 
-      {/* Footer */}
-      <div style={{ position:"fixed", bottom:0, left:0, right:0, padding:"5px 18px", background:"rgba(6,6,11,.96)", borderTop:"1px solid var(--brd)", fontSize:8, color:"#3a3a4a", textAlign:"center", fontFamily:"var(--m)", zIndex:50 }}>
-        ⚡ 100% kostenlos · Yahoo Finance · Keine API-Kosten · ⚠️ Keine Anlageberatung
-      </div>
-    </>
-  );
+      {/* ═══ ALERTS ═══ */}
+      {tab==="alerts"&&(<div className="fade">
+        <h2 style={{fontSize:18,fontWeight:300,marginBottom:12}}>Alerts ({alerts.length})</h2>
+        {alerts.length===0?<div className="card" style={{textAlign:"center",padding:30,color:"var(--mut)",fontSize:11}}>Starte Scan</div>:
+        alerts.map((a,i)=>(<div key={a.id} className="fade" style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:"var(--card)",borderRadius:5,marginBottom:2,borderLeft:`2px solid ${a.type==="SHORT"?"var(--red)":a.type==="KAUFEN"?"var(--grn)":"var(--org)"}`,animationDelay:`${i*.02}s`}}>
+          <span className="mono" style={{fontSize:9,color:"var(--mut)",minWidth:60}}>{a.time.toLocaleTimeString("de-DE")}</span>
+          <span style={{fontSize:10}}>{a.msg}</span>
+        </div>))}
+      </div>)}
+
+      {/* ═══ SETTINGS ═══ */}
+      {tab==="settings"&&(<div className="fade">
+        <h2 style={{fontSize:18,fontWeight:300,marginBottom:14}}>Einstellungen</h2>
+
+        <div className="card" style={{marginBottom:12}}>
+          <div style={{fontWeight:600,fontSize:12,marginBottom:8}}>📧 Email-Alerts (kostenlos via EmailJS)</div>
+          <p style={{fontSize:10,color:"var(--mut)",marginBottom:10,lineHeight:1.5}}>
+            Erhalte Email-Benachrichtigungen bei SHORT- oder KAUFEN-Signalen. Erstelle einen kostenlosen Account bei <a href="https://www.emailjs.com" target="_blank" style={{color:"var(--blu)"}}>emailjs.com</a> (200 Emails/Monat gratis).
+          </p>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            <input placeholder="Deine Email-Adresse" value={email} onChange={e=>setEmail(e.target.value)} style={{padding:"8px 10px",background:"rgba(255,255,255,.04)",border:"1px solid var(--brd)",borderRadius:5,color:"var(--txt)",fontSize:11,fontFamily:M}}/>
+            <input placeholder="EmailJS Service ID" value={emailCfg.service} onChange={e=>setEmailCfg(p=>({...p,service:e.target.value}))} style={{padding:"8px 10px",background:"rgba(255,255,255,.04)",border:"1px solid var(--brd)",borderRadius:5,color:"var(--txt)",fontSize:11,fontFamily:M}}/>
+            <input placeholder="EmailJS Template ID" value={emailCfg.template} onChange={e=>setEmailCfg(p=>({...p,template:e.target.value}))} style={{padding:"8px 10px",background:"rgba(255,255,255,.04)",border:"1px solid var(--brd)",borderRadius:5,color:"var(--txt)",fontSize:11,fontFamily:M}}/>
+            <input placeholder="EmailJS Public Key" value={emailCfg.key} onChange={e=>setEmailCfg(p=>({...p,key:e.target.value}))} style={{padding:"8px 10px",background:"rgba(255,255,255,.04)",border:"1px solid var(--brd)",borderRadius:5,color:"var(--txt)",fontSize:11,fontFamily:M}}/>
+          </div>
+          <div className="mono" style={{fontSize:8,color:"var(--mut)",marginTop:8}}>Status: {email?"✅ Email gesetzt":"❌ Keine Email"} · {emailCfg.service?"✅ EmailJS konfiguriert":"⚠️ Nur Browser-Alerts (keine Emails)"}</div>
+        </div>
+
+        <div className="card">
+          <div style={{fontWeight:600,fontSize:12,marginBottom:8}}>ℹ️ Über das Tool</div>
+          <div style={{fontSize:10,color:"var(--mut)",lineHeight:1.6}}>
+            <b>Kosten:</b> 0 EUR — Yahoo Finance + Google News RSS + lokale Signal-Logik<br/>
+            <b>Sektoren:</b> 12 Branchen, 45+ Aktien<br/>
+            <b>Strategie:</b> Dual — SHORT (auf Fall wetten) + BUY DIP (günstig kaufen)<br/>
+            <b>Produkte:</b> Beispiel-WKNs — immer in Consorsbank verifizieren<br/>
+            <b>Updates:</b> Push zu GitHub → Vercel deployed automatisch<br/>
+          </div>
+        </div>
+
+        <div className="card" style={{marginTop:12,borderColor:"#ff2d5530"}}>
+          <div style={{fontSize:10,color:"var(--red)",fontWeight:600,marginBottom:4}}>⚠️ Disclaimer</div>
+          <div style={{fontSize:9,color:"var(--mut)",lineHeight:1.5}}>Keine Anlageberatung. Short-Zertifikate können wertlos verfallen. Max. 2% pro Trade. Immer Stop-Loss setzen.</div>
+        </div>
+      </div>)}
+    </main>
+
+    <div style={{position:"fixed",bottom:0,left:0,right:0,padding:"4px 18px",background:"rgba(6,6,11,.96)",borderTop:"1px solid var(--brd)",fontSize:7,color:"#3a3a4a",textAlign:"center",fontFamily:M,zIndex:50}}>
+      ⚡ V2 · 12 Sektoren · Short + Buy-the-Dip · 100% kostenlos · ⚠️ Keine Anlageberatung
+    </div>
+  </>);
 }
 
-// ── Mini Chart Component ──
-function MiniChart({ data = [], w = 90, h = 22 }) {
-  if (!data || data.length < 2) return null;
-  const mn = Math.min(...data), mx = Math.max(...data), rg = mx - mn || 1;
-  const pts = data.map((v,i) => `${(i/(data.length-1))*w},${h-((v-mn)/rg)*h}`).join(" ");
-  const c = data[data.length-1] >= data[0] ? "#30d158" : "#ff2d55";
-  return <svg width={w} height={h} style={{ display:"block", flexShrink:0 }}><polyline points={pts} fill="none" stroke={c} strokeWidth="1.5" /><circle cx={w} cy={h-((data[data.length-1]-mn)/rg)*h} r="2" fill={c} /></svg>;
+function MiniChart({data=[],w=80,h=20}) {
+  if(!data||data.length<2) return null;
+  const mn=Math.min(...data),mx=Math.max(...data),rg=mx-mn||1;
+  const pts=data.map((v,i)=>`${(i/(data.length-1))*w},${h-((v-mn)/rg)*h}`).join(" ");
+  const c=data[data.length-1]>=data[0]?"#30d158":"#ff2d55";
+  return <svg width={w} height={h} style={{display:"block",flexShrink:0}}><polyline points={pts} fill="none" stroke={c} strokeWidth="1.5"/><circle cx={w} cy={h-((data[data.length-1]-mn)/rg)*h} r="2" fill={c}/></svg>;
 }
