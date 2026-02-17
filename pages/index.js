@@ -68,7 +68,8 @@ export default function App() {
 
   const fetchSignal = useCallback(async (ticker,price,change,sector,high52,low52) => {
     try {
-      const r = await fetch(`/api/signal?ticker=${ticker}&price=${price}&change=${change}&sector=${encodeURIComponent(sector)}&week_high=${high52||""}&week_low=${low52||""}`);
+      const hist = (history[ticker] || []).join(",");
+      const r = await fetch(`/api/signal?ticker=${ticker}&price=${price}&change=${change}&sector=${encodeURIComponent(sector)}&week_high=${high52||""}&week_low=${low52||""}&history=${hist}`);
       const sig = await r.json();
       setSignals(p=>({...p,[ticker]:sig}));
       if ((sig.signal==="SHORT"||sig.signal==="KAUFEN") && sig.confidence>=6) {
@@ -291,34 +292,44 @@ export default function App() {
             </div>
 
             {/* Score bars */}
-            <div style={{display:"flex",gap:8,marginBottom:10}}>
-              <div style={{flex:1}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:2}}><span style={{fontSize:8,color:"var(--mut)"}}>Short-Score</span><span className="mono" style={{fontSize:8,color:"var(--red)"}}>{idea.shortScore}</span></div>
-                <div style={{height:4,background:"rgba(255,255,255,.05)",borderRadius:2}}><div style={{height:4,width:`${idea.shortScore}%`,background:"var(--red)",borderRadius:2}}/></div>
-              </div>
-              <div style={{flex:1}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:2}}><span style={{fontSize:8,color:"var(--mut)"}}>Dip-Score</span><span className="mono" style={{fontSize:8,color:"var(--grn)"}}>{idea.dipScore}</span></div>
-                <div style={{height:4,background:"rgba(255,255,255,.05)",borderRadius:2}}><div style={{height:4,width:`${idea.dipScore}%`,background:"var(--grn)",borderRadius:2}}/></div>
-              </div>
-              <div style={{flex:1}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:2}}><span style={{fontSize:8,color:"var(--mut)"}}>Disruption</span><span className="mono" style={{fontSize:8,color:"var(--org)"}}>{idea.disruptionScore}</span></div>
-                <div style={{height:4,background:"rgba(255,255,255,.05)",borderRadius:2}}><div style={{height:4,width:`${idea.disruptionScore}%`,background:"var(--org)",borderRadius:2}}/></div>
-              </div>
+            <div style={{display:"flex",gap:6,marginBottom:8}}>
+              {[
+                {l:"Short",v:idea.shortScore,c:"var(--red)"},{l:"Dip",v:idea.dipScore,c:"var(--grn)"},
+                {l:"Disruption",v:idea.disruptionScore,c:"var(--org)"},{l:"Qualität",v:idea.qualityScore||50,c:"var(--blu)"},{l:"Burggraben",v:idea.moatScore||50,c:"var(--pur)"}
+              ].map((b,j)=>(<div key={j} style={{flex:1}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:2}}><span style={{fontSize:7,color:"var(--mut)"}}>{b.l}</span><span className="mono" style={{fontSize:7,color:b.c}}>{b.v}</span></div>
+                <div style={{height:3,background:"rgba(255,255,255,.05)",borderRadius:2}}><div style={{height:3,width:`${Math.min(b.v,100)}%`,background:b.c,borderRadius:2}}/></div>
+              </div>))}
             </div>
 
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:10}}>
-              {[{l:"PRODUKT",v:idea.product,c:"var(--blu)"},{l:"EINSTIEG",v:idea.entry,c:"var(--txt)"},{l:"STOP-LOSS",v:idea.stopLoss,c:"var(--red)"},{l:"KURSZIEL",v:idea.target,c:"var(--grn)"}].map((f,j)=>(
-                <div key={j} style={{padding:"5px 8px",background:"rgba(255,255,255,.02)",borderRadius:4}}>
-                  <div className="mono" style={{fontSize:7,color:"var(--mut)",letterSpacing:".08em"}}>{f.l}</div>
-                  <div style={{fontSize:10,fontWeight:500,color:f.c,marginTop:1,lineHeight:1.4}}>{f.v}</div>
+            {/* Technical indicators */}
+            <div style={{display:"flex",gap:4,marginBottom:8,flexWrap:"wrap"}}>
+              {idea.rsi&&<span className="badge" style={{background:`${idea.rsi<30?"var(--grn)":idea.rsi>70?"var(--red)":"var(--mut)"}18`,color:idea.rsi<30?"var(--grn)":idea.rsi>70?"var(--red)":"var(--mut)"}}>RSI {idea.rsi}</span>}
+              {idea.trend&&idea.trend!=="SEITWÄRTS"&&<span className="badge" style={{background:"rgba(255,255,255,.05)",color:"var(--mut)"}}>{idea.trend}</span>}
+              {idea.riskReward&&idea.riskReward!=="—"&&<span className="badge" style={{background:"#0a84ff18",color:"var(--blu)"}}>R:R {idea.riskReward}x</span>}
+              {idea.ampel&&<span style={{fontSize:12}}>{idea.ampel}</span>}
+              {idea.volatility&&idea.volatility!=="NORMAL"&&<span className="badge" style={{background:"#ffd60a18",color:"var(--yl)"}}>Vol: {idea.volatility}</span>}
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:5,marginBottom:8}}>
+              {[{l:"EINSTIEG",v:idea.entry,c:"var(--txt)"},{l:"STOP-LOSS",v:idea.stopLoss,c:"var(--red)"},{l:"ZIEL 1",v:idea.target,c:"var(--grn)"},{l:"ZIEL 2",v:idea.target2||"—",c:"var(--grn)"},{l:"RISK/REWARD",v:idea.riskReward?`${idea.riskReward}x`:"—",c:"var(--blu)"},{l:"POSITION",v:idea.positionSize||"—",c:"var(--pur)"}].map((f,j)=>(
+                <div key={j} style={{padding:"5px 7px",background:"rgba(255,255,255,.02)",borderRadius:4}}>
+                  <div className="mono" style={{fontSize:6,color:"var(--mut)",letterSpacing:".08em"}}>{f.l}</div>
+                  <div style={{fontSize:9,fontWeight:500,color:f.c,marginTop:1,lineHeight:1.3}}>{f.v}</div>
                 </div>
               ))}
+            </div>
+
+            <div style={{padding:"5px 7px",background:"rgba(255,255,255,.02)",borderRadius:4,marginBottom:8}}>
+              <div className="mono" style={{fontSize:6,color:"var(--mut)",letterSpacing:".08em"}}>PRODUKT</div>
+              <div style={{fontSize:9,color:"var(--blu)",marginTop:1,lineHeight:1.4}}>{idea.product}</div>
             </div>
 
             <div style={{fontSize:10,color:"var(--mut)",lineHeight:1.5,padding:"6px 8px",background:"rgba(255,255,255,.015)",borderRadius:4,borderLeft:`2px solid ${color}`}}>
               {idea.reasons?.join(" · ")}
             </div>
-            <div className="mono" style={{fontSize:7,color:"var(--mut)",marginTop:6}}>52W-Hoch: ${fmt(idea.high52)} · Abstand: {idea.fromHigh}% · Risiko: {idea.risk}</div>
+            {idea.sectorThreat&&<div style={{fontSize:8,color:"var(--org)",marginTop:4,fontStyle:"italic"}}>⚠️ {idea.sectorThreat}</div>}
+            <div className="mono" style={{fontSize:7,color:"var(--mut)",marginTop:4}}>52W: ${fmt(idea.high52)}↑ / ${fmt(idea.low52)}↓ · Abstand: {idea.fromHigh}% · Support: ${idea.support} · Resistance: ${idea.resistance}</div>
           </div>);
         })}
       </div>)}
