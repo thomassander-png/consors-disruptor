@@ -19,6 +19,8 @@ const SECTORS = [
 const M = "'IBM Plex Mono',monospace";
 const fmt = (n,d=2) => typeof n==="number" ? n.toFixed(d) : "—";
 const pct = n => typeof n==="number" ? `${n>0?"+":""}${n.toFixed(1)}%` : "—";
+const fmtVol = n => { if(!n||typeof n!=="number") return "—"; if(n>=1e9) return `${(n/1e9).toFixed(1)}B`; if(n>=1e6) return `${(n/1e6).toFixed(1)}M`; if(n>=1e3) return `${(n/1e3).toFixed(0)}K`; return n.toString(); };
+const fmtMcap = n => { if(!n||typeof n!=="number") return "—"; if(n>=1e12) return `$${(n/1e12).toFixed(1)}T`; if(n>=1e9) return `$${(n/1e9).toFixed(1)}B`; if(n>=1e6) return `$${(n/1e6).toFixed(0)}M`; return `$${n}`; };
 
 export default function App() {
   const [tab, setTab] = useState("dashboard");
@@ -36,6 +38,7 @@ export default function App() {
   const [email, setEmail] = useState("");
   const [emailCfg, setEmailCfg] = useState({ service:"", template:"", key:"" });
   const [filter, setFilter] = useState("ALL"); // ALL, SHORT, KAUFEN, WATCH
+  const [expandedTicker, setExpandedTicker] = useState(null);
 
   // Load saved settings on mount
   useEffect(() => {
@@ -232,14 +235,55 @@ export default function App() {
             {allStocks.map((s,i)=>{
               const sig=signals[s.ticker];
               const sigColor=sig?.signal==="SHORT"?"var(--red)":sig?.signal==="KAUFEN"?"var(--grn)":sig?.signal?.includes("WATCH")?"var(--org)":"var(--mut)";
-              return(<div key={s.ticker} className="fade" style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:"var(--card)",borderRadius:6,borderLeft:`2px solid ${s.change<-5?"var(--red)":s.change<-2?"var(--org)":s.change<0?"var(--yl)":"var(--grn)"}`,animationDelay:`${i*.02}s`,fontSize:11}}>
-                <span className="mono" style={{fontWeight:700,minWidth:40,color:s.change<-5?"var(--red)":"var(--txt)"}}>{s.ticker}</span>
-                <MiniChart data={history[s.ticker]||s.history||[s.price]}/>
-                <span style={{fontSize:9,color:"var(--mut)",flex:1}}>{s.name?.slice(0,20)}</span>
-                <span className="mono" style={{fontSize:11}}>{s.currency==="EUR"?"€":"$"}{fmt(s.price)}</span>
-                <span className="mono" style={{fontSize:10,fontWeight:700,minWidth:48,textAlign:"right",color:s.change<0?"var(--red)":"var(--grn)"}}>{pct(s.change)}</span>
-                {s.fromHigh&&<span className="mono" style={{fontSize:8,color:"var(--mut)",minWidth:40}}>{s.fromHigh.toFixed(0)}% v.H</span>}
-                {sig&&<span className="badge" style={{background:`${sigColor}18`,color:sigColor,fontSize:8}}>{sig.signal}</span>}
+              const isExpanded=expandedTicker===s.ticker;
+              return(<div key={s.ticker} className="fade" style={{animationDelay:`${i*.02}s`}}>
+                <div onClick={()=>setExpandedTicker(isExpanded?null:s.ticker)} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:"var(--card)",borderRadius:isExpanded?"6px 6px 0 0":"6px",borderLeft:`2px solid ${s.change<-5?"var(--red)":s.change<-2?"var(--org)":s.change<0?"var(--yl)":"var(--grn)"}`,fontSize:11,cursor:"pointer"}}>
+                  <span className="mono" style={{fontWeight:700,minWidth:40,color:s.change<-5?"var(--red)":"var(--txt)"}}>{s.ticker}</span>
+                  <MiniChart data={history[s.ticker]||s.history||[s.price]}/>
+                  <span style={{fontSize:9,color:"var(--mut)",flex:1}}>{s.name?.slice(0,20)}</span>
+                  {s.pe&&<span className="mono" style={{fontSize:8,color:"var(--pur)"}}>KGV {typeof s.pe==="number"?s.pe.toFixed(1):s.pe}</span>}
+                  {s.volume&&<span className="mono" style={{fontSize:8,color:"var(--mut)"}}>Vol {fmtVol(s.volume)}</span>}
+                  <span className="mono" style={{fontSize:11}}>{s.currency==="EUR"?"€":"$"}{fmt(s.price)}</span>
+                  <span className="mono" style={{fontSize:10,fontWeight:700,minWidth:48,textAlign:"right",color:s.change<0?"var(--red)":"var(--grn)"}}>{pct(s.change)}</span>
+                  {s.fromHigh&&<span className="mono" style={{fontSize:8,color:"var(--mut)",minWidth:40}}>{s.fromHigh.toFixed(0)}%vH</span>}
+                  {sig&&<span className="badge" style={{background:`${sigColor}18`,color:sigColor,fontSize:8}}>{sig.signal}</span>}
+                  <span style={{fontSize:8,color:"var(--mut)"}}>{isExpanded?"▲":"▼"}</span>
+                </div>
+                {isExpanded&&(
+                  <div style={{background:"var(--card)",borderRadius:"0 0 6px 6px",borderLeft:`2px solid ${s.change<-5?"var(--red)":"var(--brd)"}`,borderTop:"1px solid var(--brd)",padding:12}}>
+                    {/* TradingView Chart */}
+                    <div style={{marginBottom:10,borderRadius:6,overflow:"hidden",height:300,background:"#131722"}}>
+                      <iframe src={`https://s.tradingview.com/widgetembed/?symbol=${s.ticker}&interval=D&theme=dark&style=1&locale=de&hide_top_toolbar=0&hide_side_toolbar=1&allow_symbol_change=1&save_image=0&withdateranges=1&height=300&width=100%25`} style={{width:"100%",height:300,border:"none"}} />
+                    </div>
+                    {/* Fundamentals Grid */}
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:5,marginBottom:8}}>
+                      {[
+                        {l:"KGV (P/E)",v:s.pe?typeof s.pe==="number"?s.pe.toFixed(1):s.pe:"—",c:s.pe&&s.pe<15?"var(--grn)":s.pe&&s.pe>35?"var(--red)":"var(--txt)"},
+                        {l:"Forward KGV",v:s.forwardPe?typeof s.forwardPe==="number"?s.forwardPe.toFixed(1):s.forwardPe:"—",c:"var(--txt)"},
+                        {l:"EPS",v:s.eps?`$${typeof s.eps==="number"?s.eps.toFixed(2):s.eps}`:"—",c:"var(--txt)"},
+                        {l:"Marktkapitalisierung",v:s.marketCap?fmtMcap(s.marketCap):"—",c:"var(--blu)"},
+                        {l:"Volumen",v:s.volume?fmtVol(s.volume):"—",c:"var(--txt)"},
+                        {l:"Ø Volumen",v:s.avgVolume?fmtVol(s.avgVolume):"—",c:"var(--mut)"},
+                        {l:"Dividendenrendite",v:s.dividendYield?`${(s.dividendYield*100).toFixed(1)}%`:"—",c:s.dividendYield>0.03?"var(--grn)":"var(--txt)"},
+                        {l:"Beta",v:s.beta?typeof s.beta==="number"?s.beta.toFixed(2):s.beta:"—",c:"var(--txt)"},
+                        {l:"Short Ratio",v:s.shortRatio||"—",c:s.shortRatio&&s.shortRatio>5?"var(--red)":"var(--txt)"},
+                        {l:"Profit Margin",v:s.profitMargin?`${(s.profitMargin*100).toFixed(1)}%`:"—",c:s.profitMargin>0.15?"var(--grn)":"var(--txt)"},
+                        {l:"Umsatzwachstum",v:s.revenueGrowth?`${(s.revenueGrowth*100).toFixed(1)}%`:"—",c:s.revenueGrowth>0?"var(--grn)":"var(--red)"},
+                        {l:"Analysten-Rating",v:s.analystRating||"—",c:s.analystRating==="buy"||s.analystRating==="strong_buy"?"var(--grn)":s.analystRating==="sell"?"var(--red)":"var(--txt)"},
+                        {l:"Kursziel Analysten",v:s.targetPrice?`$${typeof s.targetPrice==="number"?s.targetPrice.toFixed(0):s.targetPrice}`:"—",c:s.targetPrice&&s.targetPrice>s.price?"var(--grn)":"var(--red)"},
+                        {l:"Nächste Earnings",v:s.nextEarnings||"—",c:"var(--yl)"},
+                        {l:"52W Hoch",v:`$${fmt(s.high52)}`,c:"var(--mut)"},
+                        {l:"52W Tief",v:`$${fmt(s.low52)}`,c:"var(--mut)"},
+                      ].map((f,j)=>(
+                        <div key={j} style={{padding:"4px 6px",background:"rgba(255,255,255,.02)",borderRadius:4}}>
+                          <div className="mono" style={{fontSize:6,color:"var(--mut)",letterSpacing:".06em"}}>{f.l.toUpperCase()}</div>
+                          <div className="mono" style={{fontSize:10,fontWeight:600,color:f.c,marginTop:1}}>{f.v}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {s.sectorThreat&&<div style={{fontSize:9,color:"var(--org)",fontStyle:"italic"}}>⚠️ KI-Bedrohung: {sig?.sectorThreat||"—"}</div>}
+                  </div>
+                )}
               </div>);
             })}
           </div>
